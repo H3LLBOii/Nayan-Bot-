@@ -1,90 +1,79 @@
 const fs = require("fs-extra");
 const path = require("path");
 
-const activeGroupsFilePath = path.join(__dirname, "..", "events", "Nayan", "groupSettings.json");
+const groupSettingsPath = path.join(__dirname, "..", "events", "Nayan", "groupSettings.json");
 
-let activeGroups = {};
-if (fs.existsSync(activeGroupsFilePath)) {
+let lockedNames = {};
+if (fs.existsSync(groupSettingsPath)) {
   try {
-    const fileData = fs.readFileSync(activeGroupsFilePath, "utf-8");
-    activeGroups = JSON.parse(fileData);
-
-    if (typeof activeGroups !== "object") {
-      console.warn("activeGroups data is not an object. Initializing to empty object.");
-      activeGroups = {};
-    }
-  } catch (error) {
-    console.error("Error loading active groups:", error);
+    const fileData = fs.readFileSync(groupSettingsPath, "utf-8");
+    lockedNames = JSON.parse(fileData);
+  } catch (err) {
+    console.error("Failed to load locked group names:", err);
   }
 }
 
-const saveActiveGroups = () => {
+const saveLockedNames = () => {
   try {
-    fs.writeFileSync(activeGroupsFilePath, JSON.stringify(activeGroups, null, 2), "utf-8");
-  } catch (error) {
-    console.error("Error saving active groups:", error);
+    fs.writeFileSync(groupSettingsPath, JSON.stringify(lockedNames, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Failed to save locked group names:", err);
   }
 };
 
 module.exports = {
   config: {
-    name: "antichange",
-    version: "1.0.0",
+    name: "antiname",
+    version: "1.0.1",
     permission: 0,
-    credits: "Nayan",
-    description: "Prevents unauthorized group changes",
+    credits: "Modified by ChatGPT based on Nayan",
+    description: "Locks group name to a specific value",
     prefix: false,
     category: "box",
-    usages: "antichange [on/off]",
+    usages: "antiname [new name]",
     cooldowns: 5,
+    listen: true
   },
 
-  start: async function ({ nayan, events, args, Threads }) {
+  start: async function ({ nayan, events, args }) {
     const threadID = events.threadID;
     const senderID = events.senderID;
-    const botAdmins = global.config.ADMINBOT;
+    const botAdmins = global.config.ADMINBOT || [];
 
-    // Check if the user is an admin or bot admin
     const threadInfo = await nayan.getThreadInfo(threadID);
     const groupAdmins = threadInfo.adminIDs.map(admin => admin.id);
 
+    // Only group admin or bot admin can use
     if (!groupAdmins.includes(senderID) && !botAdmins.includes(senderID)) {
       return nayan.sendMessage("⚠️ Only group admins or bot admins can use this command.", threadID);
     }
 
-    const initialThreadInfo = await nayan.getThreadInfo(threadID);
-    const initialGroupName = initialThreadInfo.threadName;
-    const initialGroupImage = initialThreadInfo.imageSrc || "";
+    if (args.length === 0) {
+      return nayan.sendMessage("⚠️ Please provide a name. Usage: antiname [group name]", threadID);
+    }
 
-    const { setData, getData, delData } = Threads;
+    const newName = args.join(" ");
 
-    if (args[0] === "on") {
-      const groupData = await getData(threadID);
-      const dataThread = groupData.threadInfo;
+    // Save new locked name
+    lockedNames[threadID] = newName;
+    saveLockedNames();
 
-      if (!activeGroups[threadID]) {
-        activeGroups[threadID] = {
-          name: initialGroupName,
-          image: initialGroupImage,
-        };
+    await nayan.changeGroupName(newName, threadID);
+    return nayan.sendMessage(`✅ Group name locked as: ${newName}`, threadID);
+  },
 
-        await setData(threadID, { threadInfo: dataThread });
-        saveActiveGroups();
-        nayan.sendMessage("✅ Anti-change feature has been activated for this group.", threadID);
-      } else {
-        nayan.sendMessage("⚠️ Anti-change feature is already active for this group.", threadID);
-      }
-    } else if (args[0] === "off") {
-      if (activeGroups[threadID]) {
-        delete activeGroups[threadID];
-        await delData(threadID);
-        saveActiveGroups();
-        nayan.sendMessage("🚫 Anti-change feature has been deactivated for this group.", threadID);
-      } else {
-        nayan.sendMessage("⚠️ Anti-change feature is not active for this group.", threadID);
-      }
-    } else {
-      nayan.sendMessage("⚠️ Invalid option. Please use 'antichange on' or 'antichange off'.", threadID);
+  handleEvent: async function ({ nayan, events }) {
+    const threadID = events.threadID;
+    const lockedName = lockedNames[threadID];
+
+    if (!lockedName) return;
+
+    const currentThreadInfo = await nayan.getThreadInfo(threadID);
+    const currentName = currentThreadInfo.threadName;
+
+    if (currentName !== lockedName) {
+      await nayan.changeGroupName(lockedName, threadID);
+      nayan.sendMessage(`🚫 Group name change detected! Resetting to locked name: ${lockedName}`, threadID);
     }
   }
 };
